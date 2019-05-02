@@ -640,7 +640,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Assets\NavPath.cs" />
-    <Compile Include="Assets\PathFollower.cs" />
+    <Compile Include="Assets\Scripts\PathFollower.cs" />
     <Compile Include="Assets\ThreadPool.cs" />
   </ItemGroup>
   <ItemGroup>

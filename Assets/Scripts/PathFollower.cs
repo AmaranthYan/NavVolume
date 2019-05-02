@@ -40,19 +40,7 @@ namespace NavVolume.PathFinding
         public State NavState
         {
             get; private set;
-        }
-
-        NavPath _path = new NavPath()
-        {
-            Nodes = new Vector3[5]
-            {
-                new Vector3(5, -17, -9),
-                new Vector3(-2, -10, 8),
-                new Vector3(2,-5, 5),
-                new Vector3(12,-9, 5),
-                new Vector3(19,-9, 10)
-            }
-        };
+        }        
 
         private void Awake()
         {
@@ -67,6 +55,17 @@ namespace NavVolume.PathFinding
             NavState = State.Idle;
 
             // debug
+            NavPath _path = new NavPath()
+            {
+                Nodes = new Vector3[5]
+                {
+                    new Vector3(5, -17, -9),
+                    new Vector3(-2, -10, 8),
+                    new Vector3(2,-5, 5),
+                    new Vector3(12,-9, 5),
+                    new Vector3(19,-9, 10)
+                }
+            };
             Navigate(_path);
             //Navigate(new NavPath());
         }
