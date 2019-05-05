@@ -1,5 +1,6 @@
 ﻿// Each #kernel tells which function to compile; you can have many kernels
-#pragma kernel Overlap
+#pragma kernel Compute
+#pragma kernel Reset
 
 // Create a RenderTexture with enableRandomWrite flag and set it
 // with cs.SetTexture
@@ -11,37 +12,46 @@ struct Triangle
 	float3 axes[9];
 };
 
-StructuredBuffer<Triangle> Input;
-
-RWStructuredBuffer<float3> Result;
-RWStructuredBuffer<int> intersection;
+StructuredBuffer<Triangle> input;
+RWStructuredBuffer<int> output;
 float3 center;
 float half_edge;
 
-float3 aabb_min;
-float3 aabb_max;
-
 [numthreads(4, 4, 4)]
-void Overlap(uint3 id : SV_DispatchThreadID, uint3 thread_id : SV_GroupThreadID, uint g_idx : SV_GroupIndex)
+void Compute(uint3 id : SV_DispatchThreadID, uint3 thread_id : SV_GroupThreadID, uint3 group_id : SV_GroupID, uint group_idx : SV_GroupIndex)
 {
 	// TODO: insert actual code here!
 	float3 sub_center = center + (float3(thread_id) * 2 - 3) * half_edge;
 
-	float3 _aabb_min = aabb_min - sub_center;
-	float3 _aabb_max = aabb_max - sub_center;
+	Triangle tri = input[group_id.x];
+	float3 aabb_min = tri.aabb[0] - sub_center;
+	float3 aabb_max = tri.aabb[1] - sub_center;
 
 	bool aabb_intersect = true;
 	[unroll] for (int i = 0; i < 3; i++)
 	{
-		if (_aabb_min[i] > half_edge || _aabb_max[i] < -half_edge)
+		if (aabb_min[i] > half_edge || aabb_max[i] < -half_edge)
 		{
 			aabb_intersect = false;
 			break;
 		}
 	}
 
+	uint3 out_id = thread_id >> 1;
+	uint3 out_id2 = thread_id & 1;
+
+	int idx = (out_id.x + out_id.y * 2 + out_id.z * 4) * 8 + out_id2.x + (out_id2.y << 1) + (out_id2.z << 2);
+
 	//Result[g_idx] = sub_center;
-	intersection[g_idx] = aabb_intersect;
+
+	InterlockedAdd(output[idx], aabb_intersect);
+	//Output[idx] += aabb_intersect;
 	//Result[g_idx] = float3(thread_id) * 2 - 3;
 	//Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
+}
+
+[numthreads(64, 1, 1)]
+void Reset(uint group_idx : SV_GroupIndex)
+{
+	output[group_idx] = 0;
 }
