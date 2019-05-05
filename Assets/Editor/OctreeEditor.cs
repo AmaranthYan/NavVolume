@@ -10,18 +10,31 @@ namespace NavVolume.Editor
     {
         public enum State
         {
+            None,
             Initialized,
             Extracted,
             Generated,
             Constructed,
         }
-        private State m_State;
+        private State m_State = State.None;
         private bool m_IsProcessing = false;
-
+        
         ThreadPool m_ThreadPool;
         private void OnEnable()
         {
             m_ThreadPool = new ThreadPool(8);
+            
+            m_OverlapShader = AssetDatabase.LoadAssetAtPath<ComputeShader>(OVERLAP_SHADER_PATH);
+            if (m_OverlapShader)
+            {
+                m_Kernel = m_OverlapShader.FindKernel("Overlap");
+            }
+            else
+            {
+                Debug.LogError("Load compute shader failed at " + OVERLAP_SHADER_PATH);
+                return;
+            }
+            
             m_State = State.Initialized;
         }
 
@@ -54,9 +67,14 @@ namespace NavVolume.Editor
         private void OnGUI()
         {
             m_IsProcessing = false;
-            string state = "none";
+
+            string state = string.Empty;
             switch (m_State)
             {
+                case State.None:
+                    state = "editor initialization failed, check console for errors";
+                    break;
+
                 case State.Initialized:
                     if (m_BatchCount > 0)
                     {
@@ -67,10 +85,12 @@ namespace NavVolume.Editor
                         else
                         {
                             state = "extracting triangles";
-                            Debug.Log(m_BatchCount + " " + m_BatchDone);
-
                             m_IsProcessing = true;
                         }
+                    }
+                    else
+                    {
+                        state = "editor initialized";
                     }
                     break;
 
@@ -85,7 +105,7 @@ namespace NavVolume.Editor
             GUILayout.Label(state);
             
             GUIStateButton(State.Initialized, "Extract Obstacle Triangles", ExtractObstacleTriangles);
-            GUIStateButton(State.Extracted, "Generate Octree Data", () => { });
+            GUIStateButton(State.Extracted, "Generate Octree Data", GenerateOctreeData);
             GUIStateButton(State.Generated, "Construct NavVolume", () => { });            
         }
         
@@ -125,16 +145,16 @@ namespace NavVolume.Editor
                         m_BatchCount++;
                         m_ThreadPool.QueueTask(() =>
                         {
-                            List<ObstacleTriangle> tri = new List<ObstacleTriangle>();
+                            List<ObstacleTriangle> batch = new List<ObstacleTriangle>();
                             for (int i = idx; i < idx + j; i += 3)
                             {
-                                var tr = new ObstacleTriangle(vertices, triangles[i], triangles[i + 1], triangles[i + 2]);
-                                tri.Add(tr);
+                                var t = new ObstacleTriangle(vertices, triangles[i], triangles[i + 1], triangles[i + 2]);
+                                batch.Add(t);
                             }
 
                             lock (m_ObstacleTriangles)
                             {
-                                m_ObstacleTriangles.AddRange(tri);
+                                m_ObstacleTriangles.AddRange(batch);
                                 Debug.Log("total " + m_ObstacleTriangles.Count);
 
                                 m_BatchDone++;
@@ -149,6 +169,23 @@ namespace NavVolume.Editor
                     Debug.LogWarning("Obstacle without mesh");
                 }
             }
+        }
+
+        private const string OVERLAP_SHADER_PATH = "Assets/CShader/CubeTriangleOverlap.compute";
+        private ComputeShader m_OverlapShader;
+        private int m_Kernel;
+        private void GenerateOctreeData()
+        {
+            var triangles = new ComputeBuffer(m_ObstacleTriangles.Count, sizeof(float) * 45);
+            triangles.SetData(m_ObstacleTriangles);
+            m_OverlapShader.SetBuffer(m_Kernel, "Input", triangles);
+            
+            //m_ComputeShader.SetBuffer(kernel, "intersection", buffer2);
+
+            m_OverlapShader.SetFloats("center", new float[3] { 0, 0, 0 });
+            m_OverlapShader.SetFloat("half_edge", 0.5f);
+
+            triangles.Release();
         }
     }
 }

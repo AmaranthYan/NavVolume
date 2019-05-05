@@ -1,0 +1,47 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel Overlap
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+struct Triangle
+{
+	float3 vertices[3];
+	float3 aabb[2];	
+	float3 normal;
+	float3 axes[9];
+};
+
+StructuredBuffer<Triangle> Input;
+
+RWStructuredBuffer<float3> Result;
+RWStructuredBuffer<int> intersection;
+float3 center;
+float half_edge;
+
+float3 aabb_min;
+float3 aabb_max;
+
+[numthreads(4, 4, 4)]
+void Overlap(uint3 id : SV_DispatchThreadID, uint3 thread_id : SV_GroupThreadID, uint g_idx : SV_GroupIndex)
+{
+	// TODO: insert actual code here!
+	float3 sub_center = center + (float3(thread_id) * 2 - 3) * half_edge;
+
+	float3 _aabb_min = aabb_min - sub_center;
+	float3 _aabb_max = aabb_max - sub_center;
+
+	bool aabb_intersect = true;
+	[unroll] for (int i = 0; i < 3; i++)
+	{
+		if (_aabb_min[i] > half_edge || _aabb_max[i] < -half_edge)
+		{
+			aabb_intersect = false;
+			break;
+		}
+	}
+
+	//Result[g_idx] = sub_center;
+	intersection[g_idx] = aabb_intersect;
+	//Result[g_idx] = float3(thread_id) * 2 - 3;
+	//Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
+}
