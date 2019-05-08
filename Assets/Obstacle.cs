@@ -25,7 +25,7 @@ namespace NavVolume.Editor
         {
             get
             {
-                return m_Mesh;
+                return isActiveAndEnabled ? m_Mesh : null;
             }
         }
 

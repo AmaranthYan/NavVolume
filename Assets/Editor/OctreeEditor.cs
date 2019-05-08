@@ -115,42 +115,20 @@ namespace NavVolume.Editor
             GUIStateButton(State.Generated, "Construct NavVolume", () => { });            
         }
 
+        int length = 0;
+        List<Vector3> debugCubes = new List<Vector3>();
         private void OnSceneGUI(SceneView sceneView)
         {
-            Vector3 cube = new Vector3(1, 1, 1);
+            Handles.zTest = UnityEngine.Rendering.CompareFunction.Less;
+            Vector3 cube = new Vector3(0.125f, 0.125f, 0.125f);
 
-            Vector3 root = Vector3.zero;
-            float edge = 4;
+            Handles.DrawWireCube(Vector3.zero, new Vector3(4, 4, 4));
 
-            int sum = 0;
-            for (int i = 0; i < 64; i++)
+            for (int i = 0; i < length; i++)
             {
-                int k = 0;
-
-                int c = i;
-                var sub_root = root;
-                int p = 8;
-                do
-                {
-                    int sub = c % p;
-                    c = c / p;
-
-                    var offset = new Vector3(c & 1, (c / 2) & 1, (c / 4) & 1);
-                    offset = 2 * offset - Vector3.one;
-                    sub_root += edge / (1 << (k + 1)) / 2 * offset;
-
-                    c = sub;
-                    p /= 8;
-                } while (++k < 2);
-
-                Handles.zTest = UnityEngine.Rendering.CompareFunction.Less;
-                Handles.color = Color.white;
-                if (data[i] > 0)
-                {
-                    Handles.color = Color.red;
-                    Handles.DrawWireCube(sub_root, cube);
-                }
-                sum += data[i];
+                Handles.color = Color.red;
+                Handles.DrawWireCube(debugCubes[i], cube);
+                //sum += data[i];
                 //if (r2[i] > 0)
                 //{
                 //    Gizmos.color = Color.red;
@@ -232,7 +210,7 @@ namespace NavVolume.Editor
             }
         }
         
-        int[] data = new int[64];
+        int[] data = new int[1024];
 
         private const string OVERLAP_SHADER_PATH = "Assets/CShader/CubeTriangleOverlap.compute";
         private ComputeShader m_OverlapShader;
@@ -244,17 +222,20 @@ namespace NavVolume.Editor
             triangles.SetData(m_ObstacleTriangles);
             m_OverlapShader.SetBuffer(m_ComputeKernel, "input", triangles);
 
-            var octree = new ComputeBuffer(64, sizeof(int), ComputeBufferType.Raw);
+            int group = 8;
+
+            var octree = new ComputeBuffer(group * group * group * 2, sizeof(int), ComputeBufferType.Raw);
             m_OverlapShader.SetBuffer(m_ComputeKernel, "output", octree);
 
             // reset buffer
             m_OverlapShader.SetBuffer(m_ResetKernel, "output", octree);
-            m_OverlapShader.Dispatch(m_ResetKernel, 1, 1, 1);
+            m_OverlapShader.Dispatch(m_ResetKernel, group * group * group * 2 / 64, 1, 1);
 
-            m_OverlapShader.SetFloats("center", new float[3] { 0, 0, 0 });
-            m_OverlapShader.SetFloat("half_edge", 0.5f);
+            m_OverlapShader.SetFloats("corner", new float[3] { -2, -2, -2 });
+            m_OverlapShader.SetFloat("half_edge", 0.0625f);
+            m_OverlapShader.SetInt("tri_count", m_ObstacleTriangles.Count);
 
-            m_OverlapShader.Dispatch(m_ComputeKernel, m_ObstacleTriangles.Count, 1, 1);
+            m_OverlapShader.Dispatch(m_ComputeKernel, group * m_ObstacleTriangles.Count, group, group);
             octree.GetData(data);
 
             foreach (var d in data)
@@ -264,7 +245,44 @@ namespace NavVolume.Editor
 
             octree.Release();
             triangles.Release();
-            
+
+            length = 0;
+            Vector3 root = Vector3.zero;
+            float edge = 4;
+
+            for (int i = 0; i < 128 * 32 * 8; i++)
+            {
+                int k = 0;
+
+                int c = i;
+                var sub_root = root;
+                int p = 128 * 32 * 8;
+                do
+                {
+                    p /= 8;
+                    int sub = c % p;
+                    c = c / p;
+
+                    var offset = new Vector3(c & 1, (c / 2) & 1, (c / 4) & 1);
+                    offset = 2 * offset - Vector3.one;
+                    sub_root += edge / (1 << (k + 1)) / 2 * offset;
+
+                    c = sub;
+                } while (++k < 5);
+
+                if ((data[i / 32] & (1 << (i % 32))) != 0)
+                {
+                    if (++length > debugCubes.Count)
+                    {
+                        debugCubes.Add(sub_root);
+                    }
+                    else
+                    {
+                        debugCubes[length - 1] = sub_root;
+                    }
+                }                
+            }
+
             SceneView.RepaintAll();
         }
     }

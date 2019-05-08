@@ -14,18 +14,27 @@ struct Triangle
 
 StructuredBuffer<Triangle> input;
 RWStructuredBuffer<int> output;
-float3 center;
+float3 corner;
 float half_edge;
+uint tri_count;
 
 [numthreads(4, 4, 4)]
-void Compute(uint3 id : SV_DispatchThreadID, uint3 thread_id : SV_GroupThreadID, uint3 group_id : SV_GroupID, uint group_idx : SV_GroupIndex)
+void Compute(uint3 dispatch : SV_DispatchThreadID, uint3 thread : SV_GroupThreadID, uint3 group : SV_GroupID, uint group_idx : SV_GroupIndex)
 {
-	// TODO: insert actual code here!
-	float3 sub_center = center + (float3(thread_id) * 2 - 3) * half_edge;
+	// block of 64 cubes
+	uint3 block = uint3(group.x / tri_count, group.yz);
+	//Result[g_idx] = sub_center;
+	
+	// overlap test
+	uint3 cube = block * 4 + thread;
+	float3 center = corner + (cube * 2 + 1) * half_edge;
 
-	Triangle tri = input[group_id.x];
-	float3 aabb_min = tri.aabb[0] - sub_center;
-	float3 aabb_max = tri.aabb[1] - sub_center;
+	// TODO: insert actual code here!
+
+	uint tri_idx = group.x % tri_count;
+	Triangle tri = input[tri_idx];
+	float3 aabb_min = tri.aabb[0] - center;
+	float3 aabb_max = tri.aabb[1] - center;
 
 	bool aabb_intersect = true;
 	[unroll] for (int i = 0; i < 3; i++)
@@ -37,21 +46,46 @@ void Compute(uint3 id : SV_DispatchThreadID, uint3 thread_id : SV_GroupThreadID,
 		}
 	}
 
-	uint3 out_id = thread_id >> 1;
-	uint3 out_id2 = thread_id & 1;
+	if (aabb_intersect)
+	{
+		uint octree = 0;
+		uint factor = 1;
+		[unroll] while (block.x + block.y + block.z > 0)
+		{
+			uint3 idx = block & 1;
+			octree += (idx.x + idx.y * 2 + idx.z * 4) * factor;
+			block >>= 1;
+			factor <<= 3;
+		}
+		octree <<= 1;
 
-	int idx = (out_id.x + out_id.y * 2 + out_id.z * 4) * 8 + out_id2.x + (out_id2.y << 1) + (out_id2.z << 2);
+		uint3 out_id = thread / 2;
+		uint3 out_id2 = thread % 2;
 
-	//Result[g_idx] = sub_center;
+		uint bit = (out_id.x + out_id.y * 2 + out_id.z * 4) * 8 + out_id2.x + (out_id2.y << 1) + (out_id2.z << 2);
+		octree += bit / 32;
 
-	InterlockedAdd(output[idx], aabb_intersect);
+		uint flag = 1 << (bit % 32);
+
+		if (output[octree] & flag)
+		{
+			return;
+		}
+
+		InterlockedOr(output[octree], flag);
+		//output[36] = flag;
+	}
+	
+	
+
+	
 	//Output[idx] += aabb_intersect;
 	//Result[g_idx] = float3(thread_id) * 2 - 3;
 	//Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
 }
 
 [numthreads(64, 1, 1)]
-void Reset(uint group_idx : SV_GroupIndex)
+void Reset(uint dispatch : SV_DispatchThreadID)
 {
-	output[group_idx] = 0;
+	output[dispatch.x] = 0;
 }
