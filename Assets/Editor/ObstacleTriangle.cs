@@ -50,7 +50,8 @@ namespace NavVolume.Editor
             AABB0 = Vector3.Min(Vector3.Min(Vertex0, Vertex1), Vertex2);
             AABB1 = Vector3.Max(Vector3.Max(Vertex0, Vertex1), Vertex2);
 
-            Normal = Vector3.Cross(Vertex0, Vertex1);
+            Normal = Vector3.Cross(edges[0], edges[1]);
+            Normal.Normalize();
 
             Axes0 = new Vector3(0, -edges[0].z, edges[0].y);
             Axes3 = new Vector3(edges[0].z, 0, -edges[0].x);

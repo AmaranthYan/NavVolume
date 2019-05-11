@@ -1,6 +1,7 @@
 ﻿// Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel Compute
-#pragma kernel Reset
+#pragma kernel Reset2
+#pragma kernel Reset32
 
 // Create a RenderTexture with enableRandomWrite flag and set it
 // with cs.SetTexture
@@ -14,78 +15,111 @@ struct Triangle
 
 StructuredBuffer<Triangle> input;
 RWStructuredBuffer<int> output;
+uint offset;
+
 float3 corner;
 float half_edge;
 uint tri_count;
+uint tri_count_sqrt;
+
+uint Unfold(uint3 idx)
+{
+	return idx.x + (idx.y << 1) + (idx.z << 2);
+}
 
 [numthreads(4, 4, 4)]
 void Compute(uint3 dispatch : SV_DispatchThreadID, uint3 thread : SV_GroupThreadID, uint3 group : SV_GroupID, uint group_idx : SV_GroupIndex)
 {
+	uint tri_idx = group.x % tri_count_sqrt * tri_count_sqrt + group.y % tri_count_sqrt;
+	if (tri_idx >= tri_count)
+	{
+		return;
+	}
+
 	// block of 64 cubes
-	uint3 block = uint3(group.x / tri_count, group.yz);
+	uint3 block = uint3(group.xy / tri_count_sqrt, group.z);
 	//Result[g_idx] = sub_center;
 	
 	// overlap test
 	uint3 cube = block * 4 + thread;
 	float3 center = corner + (cube * 2 + 1) * half_edge;
 
-	// TODO: insert actual code here!
-
-	uint tri_idx = group.x % tri_count;
 	Triangle tri = input[tri_idx];
+
+	bool overlap = true;
+
+	// 3 aabb tests
 	float3 aabb_min = tri.aabb[0] - center;
 	float3 aabb_max = tri.aabb[1] - center;
-
-	bool aabb_intersect = true;
+	
 	[unroll] for (int i = 0; i < 3; i++)
 	{
 		if (aabb_min[i] > half_edge || aabb_max[i] < -half_edge)
 		{
-			aabb_intersect = false;
+			overlap = false;
 			break;
 		}
 	}
 
-	if (aabb_intersect)
+	// abandon further tests if aabb does not overlap
+	if (!overlap)
 	{
-		uint octree = 0;
-		uint factor = 1;
-		[unroll] while (block.x + block.y + block.z > 0)
-		{
-			uint3 idx = block & 1;
-			octree += (idx.x + idx.y * 2 + idx.z * 4) * factor;
-			block >>= 1;
-			factor <<= 3;
-		}
-		octree <<= 1;
-
-		uint3 out_id = thread / 2;
-		uint3 out_id2 = thread % 2;
-
-		uint bit = (out_id.x + out_id.y * 2 + out_id.z * 4) * 8 + out_id2.x + (out_id2.y << 1) + (out_id2.z << 2);
-		octree += bit / 32;
-
-		uint flag = 1 << (bit % 32);
-
-		if (output[octree] & flag)
-		{
-			return;
-		}
-
-		InterlockedOr(output[octree], flag);
-		//output[36] = flag;
+		return;
 	}
-	
-	
 
-	
-	//Output[idx] += aabb_intersect;
-	//Result[g_idx] = float3(thread_id) * 2 - 3;
-	//Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
+	float3 vert[3] = 
+	{
+		tri.vertices[0] - center,
+		tri.vertices[1] - center,
+		tri.vertices[2] - center
+	};
+
+	// 1 normal test
+	float3 radius = half_edge * abs(tri.normal);
+	float distance = abs(dot(vert[0], tri.normal));
+	overlap = distance <= (radius.x + radius.y + radius.z);
+
+	// 9 axes tests
+
+	if (!overlap)
+	{
+		return;
+	}
+
+	uint grid = 0;
+	uint factor = 1;
+	[unroll] while (block.x + block.y + block.z > 0)
+	{
+		uint3 idx = block & 1;
+		grid += Unfold(idx) * factor;
+		block >>= 1;
+		factor <<= 3;
+	}
+	grid <<= 1;
+
+	uint bit = (Unfold(thread >> 1) << 3) + Unfold(thread & 1);
+	grid += bit / 32;
+
+	grid += offset;
+
+	uint flag = 1 << (bit % 32);
+
+	if (output[grid] & flag)
+	{
+		return;
+	}
+
+	InterlockedOr(output[grid], flag);
 }
 
-[numthreads(64, 1, 1)]
-void Reset(uint dispatch : SV_DispatchThreadID)
+[numthreads(2, 1, 1)]
+void Reset2(uint dispatch : SV_DispatchThreadID)
+{
+	output[dispatch.x] = 0;
+}
+
+[numthreads(32, 1, 1)]
+void Reset32(uint dispatch : SV_DispatchThreadID)
 {
 	output[dispatch.x] = 0;
 }

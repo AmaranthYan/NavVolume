@@ -30,7 +30,8 @@ namespace NavVolume.Editor
             if (m_OverlapShader)
             {
                 m_ComputeKernel = m_OverlapShader.FindKernel("Compute");
-                m_ResetKernel = m_OverlapShader.FindKernel("Reset");
+                m_Reset2Kernel = m_OverlapShader.FindKernel("Reset2");
+                m_Reset32Kernel = m_OverlapShader.FindKernel("Reset32");
             }
             else
             {
@@ -47,11 +48,11 @@ namespace NavVolume.Editor
             SceneView.onSceneGUIDelegate -= OnSceneGUI;
         }
         
-        [MenuItem("NavVolume/Octree Editor")]
+        [MenuItem("NavVolume/Editor")]
         public static void ShowWindow()
         {
             //Show existing window instance. If one doesn't exist, make one.
-            EditorWindow.GetWindow(typeof(OctreeEditor), true, "Octree Editor");
+            EditorWindow.GetWindow(typeof(OctreeEditor), true, "NavVolume Editor");
         }
         
         void GUIStateButton(State prev, string text, Action func)
@@ -104,30 +105,36 @@ namespace NavVolume.Editor
 
             }
         }
-
         string state = string.Empty;
+        float m_EdgeLength = 10f;
         private void OnGUI()
         {   
             GUILayout.Label(state);
             
             GUIStateButton(State.Initialized, "Extract Obstacle Triangles", ExtractObstacleTriangles);
-            GUIStateButton(State.Extracted, "Generate Octree Data", GenerateOctreeData);
+
+            depth = EditorGUILayout.IntSlider("Octree Depth", depth, MIN_OCTREE_DEPTH, MAX_OCTREE_DEPTH);
+            m_EdgeLength = EditorGUILayout.FloatField("Edge Size", m_EdgeLength);
+            GUIStateButton(State.Extracted, "Generate Grid Data", GenerateGridData);
+
             GUIStateButton(State.Generated, "Construct NavVolume", () => { });            
         }
 
         int length = 0;
         List<Vector3> debugCubes = new List<Vector3>();
+        float cubeEdge = 0;
         private void OnSceneGUI(SceneView sceneView)
         {
+            
             Handles.zTest = UnityEngine.Rendering.CompareFunction.Less;
-            Vector3 cube = new Vector3(0.125f, 0.125f, 0.125f);
+            Vector3 cube = new Vector3(cubeEdge, cubeEdge, cubeEdge);
 
-            Handles.DrawWireCube(Vector3.zero, new Vector3(4, 4, 4));
+            Handles.DrawWireCube(Vector3.zero, Vector3.one * m_EdgeLength);
 
             for (int i = 0; i < length; i++)
             {
                 Handles.color = Color.red;
-                Handles.DrawWireCube(debugCubes[i], cube);
+                Handles.DrawWireCube(debugCubes[i], cube);                
                 //sum += data[i];
                 //if (r2[i] > 0)
                 //{
@@ -210,53 +217,93 @@ namespace NavVolume.Editor
             }
         }
         
-        int[] data = new int[1024];
+        int[] data = new int[2 << ((MAX_OCTREE_DEPTH - 2) * 3)];
 
         private const string OVERLAP_SHADER_PATH = "Assets/CShader/CubeTriangleOverlap.compute";
         private ComputeShader m_OverlapShader;
         private int m_ComputeKernel;
-        private int m_ResetKernel;
-        private void GenerateOctreeData()
+        private int m_Reset2Kernel;
+        private int m_Reset32Kernel;
+
+        private const int MIN_OCTREE_DEPTH = 2;
+        private const int MAX_OCTREE_DEPTH = 7;
+
+        int depth = MIN_OCTREE_DEPTH;
+        
+        private void GenerateGridData()
         {
             var triangles = new ComputeBuffer(m_ObstacleTriangles.Count, sizeof(float) * 45);
             triangles.SetData(m_ObstacleTriangles);
             m_OverlapShader.SetBuffer(m_ComputeKernel, "input", triangles);
 
-            int group = 8;
+            int group = 1 << (depth - 2);
+            int ggg = group * group * group;
 
-            var octree = new ComputeBuffer(group * group * group * 2, sizeof(int), ComputeBufferType.Raw);
-            m_OverlapShader.SetBuffer(m_ComputeKernel, "output", octree);
+            var grid = new ComputeBuffer(ggg * 2, sizeof(int), ComputeBufferType.Raw);
+            m_OverlapShader.SetBuffer(m_ComputeKernel, "output", grid);
 
             // reset buffer
-            m_OverlapShader.SetBuffer(m_ResetKernel, "output", octree);
-            m_OverlapShader.Dispatch(m_ResetKernel, group * group * group * 2 / 64, 1, 1);
+            if (depth <= 3)
+            {
+                m_OverlapShader.SetBuffer(m_Reset2Kernel, "output", grid);
+                m_OverlapShader.Dispatch(m_Reset2Kernel, ggg, 1, 1);
+            }
+            else
+            {
+                m_OverlapShader.SetBuffer(m_Reset32Kernel, "output", grid);
+                m_OverlapShader.Dispatch(m_Reset32Kernel, ggg / 16, 1, 1);
+            }            
 
-            m_OverlapShader.SetFloats("corner", new float[3] { -2, -2, -2 });
-            m_OverlapShader.SetFloat("half_edge", 0.0625f);
+            m_OverlapShader.SetFloat("half_edge", m_EdgeLength / (1 << depth) / 2);
             m_OverlapShader.SetInt("tri_count", m_ObstacleTriangles.Count);
 
-            m_OverlapShader.Dispatch(m_ComputeKernel, group * m_ObstacleTriangles.Count, group, group);
-            octree.GetData(data);
 
-            foreach (var d in data)
+
+
+            int sqrt = (int)Mathf.Ceil(Mathf.Sqrt(m_ObstacleTriangles.Count));
+            m_OverlapShader.SetInt("tri_count_sqrt", sqrt);
+            
+            float corner = -m_EdgeLength / 2;
+
+            // unity will crash if dispatch too many thread groups at once
+            // use multiple dispatch instead
+            if (depth == 7)
             {
-                Debug.Log(d);
+                for (int i = 0; i < 8; i++)
+                {
+                    m_OverlapShader.SetInt("offset", i * 8192);
+                    float corner_x = corner - corner * (i & 1);
+                    float corner_y = corner - corner * ((i >> 1) & 1);
+                    float corner_z = corner - corner * ((i >> 2) & 1);
+                    m_OverlapShader.SetFloats("corner", corner_x, corner_y, corner_z);
+                    m_OverlapShader.Dispatch(m_ComputeKernel, 16 * sqrt, 16 * sqrt, 16);
+                }
             }
-
-            octree.Release();
+            else
+            {
+                m_OverlapShader.SetInt("offset", 0);
+                m_OverlapShader.SetFloats("corner", corner, corner, corner);
+                m_OverlapShader.Dispatch(m_ComputeKernel, group * sqrt, group * sqrt, group);                
+            }
+            grid.GetData(data);
+            
+            grid.Release();
             triangles.Release();
+
+            //return;
 
             length = 0;
             Vector3 root = Vector3.zero;
-            float edge = 4;
+            float edge = m_EdgeLength;
 
-            for (int i = 0; i < 128 * 32 * 8; i++)
+            int total = 2 << ((depth - 2) * 3);
+            for (int i = 0; i < total * 32; i++)
             {
                 int k = 0;
 
                 int c = i;
                 var sub_root = root;
-                int p = 128 * 32 * 8;
+                int p = total * 32;
                 do
                 {
                     p /= 8;
@@ -268,7 +315,7 @@ namespace NavVolume.Editor
                     sub_root += edge / (1 << (k + 1)) / 2 * offset;
 
                     c = sub;
-                } while (++k < 5);
+                } while (++k < depth);
 
                 if ((data[i / 32] & (1 << (i % 32))) != 0)
                 {
@@ -282,6 +329,7 @@ namespace NavVolume.Editor
                     }
                 }                
             }
+            cubeEdge = m_EdgeLength / (1 << depth);
 
             SceneView.RepaintAll();
         }
