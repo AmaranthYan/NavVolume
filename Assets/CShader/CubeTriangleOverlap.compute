@@ -51,14 +51,11 @@ void Compute(uint3 dispatch : SV_DispatchThreadID, uint3 thread : SV_GroupThread
 	// 3 aabb tests
 	float3 aabb_min = tri.aabb[0] - center;
 	float3 aabb_max = tri.aabb[1] - center;
-	
-	[unroll] for (int i = 0; i < 3; i++)
+
+	int i;
+	[unroll] for (i = 0; i < 3; i++)
 	{
-		if (aabb_min[i] > half_edge || aabb_max[i] < -half_edge)
-		{
-			overlap = false;
-			break;
-		}
+		overlap = overlap && (aabb_min[i] <= half_edge && aabb_max[i] >= -half_edge);
 	}
 
 	// abandon further tests if aabb does not overlap
@@ -74,12 +71,23 @@ void Compute(uint3 dispatch : SV_DispatchThreadID, uint3 thread : SV_GroupThread
 		tri.vertices[2] - center
 	};
 
-	// 1 normal test
-	float3 radius = half_edge * abs(tri.normal);
-	float distance = abs(dot(vert[0], tri.normal));
-	overlap = distance <= (radius.x + radius.y + radius.z);
+	float3 half_edge3 = float3(half_edge, half_edge, half_edge);
+
+	// 1 normal test	
+	float radius = dot(half_edge3, abs(tri.normal));
+	overlap = overlap && (abs(dot(vert[0], tri.normal)) <= radius);
 
 	// 9 axes tests
+	[unroll] for (i = 0; i < 9; i++)
+	{
+		float proj[2] =
+		{
+			dot(tri.axes[i], vert[i % 3]),
+			dot(tri.axes[i], vert[(i + 2) % 3])
+		};		
+		radius = dot(half_edge3, abs(tri.axes[i]));
+		overlap = overlap && (min(proj[0], proj[1]) <= radius && max(proj[0], proj[1]) >= -radius);
+	}
 
 	if (!overlap)
 	{
