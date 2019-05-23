@@ -125,7 +125,6 @@ namespace NavVolume.Editor
         float cubeEdge = 0;
         private void OnSceneGUI(SceneView sceneView)
         {
-            
             Handles.zTest = UnityEngine.Rendering.CompareFunction.Less;
             Vector3 cube = new Vector3(cubeEdge, cubeEdge, cubeEdge);
 
@@ -217,7 +216,7 @@ namespace NavVolume.Editor
             }
         }
         
-        int[] data = new int[2 << ((MAX_OCTREE_DEPTH - 2) * 3)];
+        int[] data = null;
 
         private const string OVERLAP_SHADER_PATH = "Assets/CShader/CubeTriangleOverlap.compute";
         private ComputeShader m_OverlapShader;
@@ -257,8 +256,7 @@ namespace NavVolume.Editor
             m_OverlapShader.SetFloat("half_edge", m_EdgeLength / (1 << depth) / 2);
             m_OverlapShader.SetInt("tri_count", m_ObstacleTriangles.Count);
 
-
-
+            data = new int[ggg * 2];
 
             int sqrt = (int)Mathf.Ceil(Mathf.Sqrt(m_ObstacleTriangles.Count));
             m_OverlapShader.SetInt("tri_count_sqrt", sqrt);
@@ -277,6 +275,8 @@ namespace NavVolume.Editor
                     float corner_z = corner - corner * ((i >> 2) & 1);
                     m_OverlapShader.SetFloats("corner", corner_x, corner_y, corner_z);
                     m_OverlapShader.Dispatch(m_ComputeKernel, 16 * sqrt, 16 * sqrt, 16);
+                    // sleep between dispatches or unity might crash
+                    System.Threading.Thread.Sleep(10);
                 }
             }
             else
