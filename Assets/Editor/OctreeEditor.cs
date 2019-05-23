@@ -107,16 +107,33 @@ namespace NavVolume.Editor
         }
         string state = string.Empty;
         float m_EdgeLength = 10f;
+        bool m_DebugGrid = false;
         private void OnGUI()
         {   
-            GUILayout.Label(state);
-            
+            GUILayout.Label("Editor State [" + state +"]");
+
+            GUIStyle boldText = new GUIStyle(EditorStyles.label);
+            boldText.fontStyle = FontStyle.Bold;
+
+            EditorGUILayout.LabelField("Triangle Extraction", boldText);
             GUIStateButton(State.Initialized, "Extract Obstacle Triangles", ExtractObstacleTriangles);
 
+            EditorGUILayout.LabelField("Grid Generation", boldText);
             depth = EditorGUILayout.IntSlider("Octree Depth", depth, MIN_OCTREE_DEPTH, MAX_OCTREE_DEPTH);
+
+            EditorGUILayout.BeginHorizontal();
             m_EdgeLength = EditorGUILayout.FloatField("Edge Size", m_EdgeLength);
+            bool prev = m_DebugGrid;
+            m_DebugGrid = EditorGUILayout.Toggle("Debug Grid", m_DebugGrid);
+            if (m_DebugGrid != prev)
+            {
+                SceneView.RepaintAll();
+            }
+            EditorGUILayout.EndHorizontal();
+
             GUIStateButton(State.Extracted, "Generate Grid Data", GenerateGridData);
 
+            EditorGUILayout.LabelField("NavVolume Generation", boldText);
             GUIStateButton(State.Generated, "Construct NavVolume", () => { });            
         }
 
@@ -130,22 +147,25 @@ namespace NavVolume.Editor
 
             Handles.DrawWireCube(Vector3.zero, Vector3.one * m_EdgeLength);
 
-            for (int i = 0; i < length; i++)
+            if (m_DebugGrid)
             {
-                Handles.color = Color.red;
-                Handles.DrawWireCube(debugCubes[i], cube);                
-                //sum += data[i];
-                //if (r2[i] > 0)
-                //{
-                //    Gizmos.color = Color.red;
-                //    Gizmos.DrawCube(r[i], cube);
-                //}
-                //else
-                //{
-                //    Gizmos.color = Color.white;
-                //    Gizmos.DrawWireCube(r[i], cube);
-                //}
-            }
+                for (int i = 0; i < length; i++)
+                {
+                    Handles.color = Color.red;
+                    Handles.DrawWireCube(debugCubes[i], cube);
+                    //sum += data[i];
+                    //if (r2[i] > 0)
+                    //{
+                    //    Gizmos.color = Color.red;
+                    //    Gizmos.DrawCube(r[i], cube);
+                    //}
+                    //else
+                    //{
+                    //    Gizmos.color = Color.white;
+                    //    Gizmos.DrawWireCube(r[i], cube);
+                    //}
+                }
+            }            
         }
 
 
@@ -195,7 +215,7 @@ namespace NavVolume.Editor
                             lock (m_ObstacleTriangles)
                             {
                                 m_ObstacleTriangles.AddRange(batch);
-                                Debug.Log("total " + m_ObstacleTriangles.Count);
+                                //Debug.Log("total " + m_ObstacleTriangles.Count);
 
                                 m_BatchDone++;
                             }
@@ -331,7 +351,10 @@ namespace NavVolume.Editor
             }
             cubeEdge = m_EdgeLength / (1 << depth);
 
-            SceneView.RepaintAll();
+            if (m_DebugGrid)
+            {
+                SceneView.RepaintAll();
+            }
         }
     }
 }
