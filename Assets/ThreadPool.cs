@@ -13,6 +13,7 @@ namespace NavVolume.Utility
 
         private Thread[] m_WorkerThread;
         private object m_PoolLock = new object();
+        private int m_AvailableThreadCount = 0;
 
         private void ThreadJob()
         {
@@ -31,7 +32,9 @@ namespace NavVolume.Utility
                     }
                     else
                     {
+                        m_AvailableThreadCount++;
                         Monitor.Wait(m_PoolLock);
+                        m_AvailableThreadCount--;
                     }
                 }
 
@@ -72,6 +75,17 @@ namespace NavVolume.Utility
                     {
                         thread.Join();
                     }
+                }
+            }
+        }
+
+        public int AvailableThreadCount
+        {
+            get
+            {
+                lock (m_PoolLock)
+                {
+                    return m_Disposed ? 0 : m_AvailableThreadCount;
                 }
             }
         }

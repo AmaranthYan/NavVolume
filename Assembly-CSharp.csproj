@@ -63,6 +63,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Assets\NavPath.cs" />
+    <Compile Include="Assets\NavVolume.cs" />
     <Compile Include="Assets\Obstacle.cs" />
     <Compile Include="Assets\Scripts\PathFollower.cs" />
     <Compile Include="Assets\ThreadPool.cs" />

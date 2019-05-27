@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
@@ -18,13 +19,13 @@ namespace NavVolume.Editor
         }
         private State m_State = State.None;
         private bool m_IsProcessing = false;
-        
-        ThreadPool m_ThreadPool;
+
+        Utility.ThreadPool m_ThreadPool;
         private void OnEnable()
         {
-            SceneView.onSceneGUIDelegate += OnSceneGUI;
+            SceneView.duringSceneGui += OnSceneGUI;
 
-            m_ThreadPool = new ThreadPool(8);
+            m_ThreadPool = new Utility.ThreadPool(8);
             
             m_OverlapShader = AssetDatabase.LoadAssetAtPath<ComputeShader>(OVERLAP_SHADER_PATH);
             if (m_OverlapShader)
@@ -45,7 +46,7 @@ namespace NavVolume.Editor
         private void OnDestroy()
         {
             m_ThreadPool.Dispose();
-            SceneView.onSceneGUIDelegate -= OnSceneGUI;
+            SceneView.duringSceneGui -= OnSceneGUI;
         }
         
         [MenuItem("NavVolume/Editor")]
@@ -119,7 +120,7 @@ namespace NavVolume.Editor
             GUIStateButton(State.Initialized, "Extract Obstacle Triangles", ExtractObstacleTriangles);
 
             EditorGUILayout.LabelField("Grid Generation", boldText);
-            depth = EditorGUILayout.IntSlider("Octree Depth", depth, MIN_OCTREE_DEPTH, MAX_OCTREE_DEPTH);
+            m_VolumeDepth = EditorGUILayout.IntSlider("Octree Depth", m_VolumeDepth, MIN_OCTREE_DEPTH, MAX_OCTREE_DEPTH);
 
             EditorGUILayout.BeginHorizontal();
             m_EdgeLength = EditorGUILayout.FloatField("Edge Size", m_EdgeLength);
@@ -134,7 +135,7 @@ namespace NavVolume.Editor
             GUIStateButton(State.Extracted, "Generate Grid Data", GenerateGridData);
 
             EditorGUILayout.LabelField("NavVolume Generation", boldText);
-            GUIStateButton(State.Generated, "Construct NavVolume", () => { });            
+            GUIStateButton(State.Generated, "Construct NavVolume", ConstructNavVolume);            
         }
 
         int length = 0;
@@ -236,7 +237,7 @@ namespace NavVolume.Editor
             }
         }
         
-        int[] data = null;
+        int[] m_GridData = null;
 
         private const string OVERLAP_SHADER_PATH = "Assets/CShader/CubeTriangleOverlap.compute";
         private ComputeShader m_OverlapShader;
@@ -247,7 +248,7 @@ namespace NavVolume.Editor
         private const int MIN_OCTREE_DEPTH = 2;
         private const int MAX_OCTREE_DEPTH = 7;
 
-        int depth = MIN_OCTREE_DEPTH;
+        int m_VolumeDepth = MIN_OCTREE_DEPTH;
         
         private void GenerateGridData()
         {
@@ -255,14 +256,14 @@ namespace NavVolume.Editor
             triangles.SetData(m_ObstacleTriangles);
             m_OverlapShader.SetBuffer(m_ComputeKernel, "input", triangles);
 
-            int group = 1 << (depth - 2);
+            int group = 1 << (m_VolumeDepth - 2);
             int ggg = group * group * group;
 
             var grid = new ComputeBuffer(ggg * 2, sizeof(int), ComputeBufferType.Raw);
             m_OverlapShader.SetBuffer(m_ComputeKernel, "output", grid);
 
             // reset buffer
-            if (depth <= 3)
+            if (m_VolumeDepth <= 3)
             {
                 m_OverlapShader.SetBuffer(m_Reset2Kernel, "output", grid);
                 m_OverlapShader.Dispatch(m_Reset2Kernel, ggg, 1, 1);
@@ -273,10 +274,10 @@ namespace NavVolume.Editor
                 m_OverlapShader.Dispatch(m_Reset32Kernel, ggg / 16, 1, 1);
             }            
 
-            m_OverlapShader.SetFloat("half_edge", m_EdgeLength / (1 << depth) / 2);
+            m_OverlapShader.SetFloat("half_edge", m_EdgeLength / (1 << m_VolumeDepth) / 2);
             m_OverlapShader.SetInt("tri_count", m_ObstacleTriangles.Count);
 
-            data = new int[ggg * 2];
+            m_GridData = new int[ggg * 2];
 
             int sqrt = (int)Mathf.Ceil(Mathf.Sqrt(m_ObstacleTriangles.Count));
             m_OverlapShader.SetInt("tri_count_sqrt", sqrt);
@@ -285,7 +286,7 @@ namespace NavVolume.Editor
 
             // unity will crash if dispatch too many thread groups at once
             // use multiple dispatch instead
-            if (depth == 7)
+            if (m_VolumeDepth == 7)
             {
                 for (int i = 0; i < 8; i++)
                 {
@@ -305,7 +306,7 @@ namespace NavVolume.Editor
                 m_OverlapShader.SetFloats("corner", corner, corner, corner);
                 m_OverlapShader.Dispatch(m_ComputeKernel, group * sqrt, group * sqrt, group);                
             }
-            grid.GetData(data);
+            grid.GetData(m_GridData);
             
             grid.Release();
             triangles.Release();
@@ -316,7 +317,7 @@ namespace NavVolume.Editor
             Vector3 root = Vector3.zero;
             float edge = m_EdgeLength;
 
-            int total = 2 << ((depth - 2) * 3);
+            int total = 2 << ((m_VolumeDepth - 2) * 3);
             for (int i = 0; i < total * 32; i++)
             {
                 int k = 0;
@@ -335,9 +336,9 @@ namespace NavVolume.Editor
                     sub_root += edge / (1 << (k + 1)) / 2 * offset;
 
                     c = sub;
-                } while (++k < depth);
+                } while (++k < m_VolumeDepth);
 
-                if ((data[i / 32] & (1 << (i % 32))) != 0)
+                if ((m_GridData[i / 32] & (1 << (i % 32))) != 0)
                 {
                     if (++length > debugCubes.Count)
                     {
@@ -349,12 +350,79 @@ namespace NavVolume.Editor
                     }
                 }                
             }
-            cubeEdge = m_EdgeLength / (1 << depth);
+            cubeEdge = m_EdgeLength / (1 << m_VolumeDepth);
 
             if (m_DebugGrid)
             {
                 SceneView.RepaintAll();
             }
+
+            m_State = State.Generated;
+        }
+
+        private void ConstructOctree(Octree octree, int offset, int depth, Utility.ThreadPool workerPool)
+        {
+            if (depth == 0)
+            {
+                int idx = offset >> 5;
+                int bit = 1 << (offset & 0x1f);
+
+                if ((m_GridData[idx] & bit) != 0)
+                {
+                    octree.Occupy();
+                }
+                else
+                {
+                    Debug.Log(0);
+                }
+            }
+            else
+            {
+                depth--;
+                int size = 1 << (3 * depth);
+                var subtrees = octree.Subdivide();
+
+                for (int i = 0; i < 8; i++)
+                {
+                    var subtree = subtrees[i];
+                    int delta = i * size;
+
+                    bool fork = false;
+                    if (workerPool.AvailableThreadCount > 0)
+                    {
+                        lock (workerPool)
+                        {
+                            if (workerPool.AvailableThreadCount > 0)
+                            {
+                                workerPool.QueueTask(() => ConstructOctree(subtree, offset + delta, depth, workerPool));
+                                fork = true;
+                                //Debug.Log("tc " + workerPool.AvailableThreadCount);
+                            }
+                        }
+                    }
+
+                    if (!fork)
+                    {
+                        ConstructOctree(subtree, offset + delta, depth, workerPool);
+                    }
+                }
+            }
+        }
+
+        private void ConstructNavVolume()
+        {
+            var navVolume = new NavVolume(Vector3.zero, m_VolumeDepth);
+
+            Thread thread = new Thread(() =>
+            {
+                Utility.ThreadPool workerPool = new Utility.ThreadPool(8);
+                
+                ConstructOctree(navVolume.Root, 0, m_VolumeDepth, workerPool);
+
+                workerPool.Dispose();
+            });
+
+            thread.Start();
         }
     }
 }
