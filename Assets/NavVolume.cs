@@ -33,6 +33,11 @@ namespace NavVolume
             return Subtrees;
         }
 
+        public void Cut()
+        {
+            Subtrees = null;
+        }
+
         public void Occupy()
         {
             Occupied = true;

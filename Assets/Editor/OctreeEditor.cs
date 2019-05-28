@@ -104,6 +104,17 @@ namespace NavVolume.Editor
                     state = "triangles extracted";
                     break;
 
+                case State.Generated:
+                    if (m_OctreeState == OctreeState.Null)
+                    {
+                        state = "grid generated";
+                    }
+                    else if(m_OctreeState == OctreeState.Done)
+                    {
+                        state = "octree constructed";
+                    }
+                    break;
+
             }
         }
         string state = string.Empty;
@@ -360,6 +371,15 @@ namespace NavVolume.Editor
             m_State = State.Generated;
         }
 
+        private enum OctreeState
+        {
+            Null,
+            Constructing,
+            Reducing,
+            Done
+        }
+        OctreeState m_OctreeState = OctreeState.Null;
+        NavVolume navVolume;
         private void ConstructOctree(Octree octree, int offset, int depth, Utility.ThreadPool workerPool)
         {
             if (depth == 0)
@@ -409,17 +429,61 @@ namespace NavVolume.Editor
             }
         }
 
+        private void ReduceOctree(Octree octree, Utility.ThreadPool workerPool)
+        {
+            if (octree.Subtrees != null)
+            {
+                for (int i = 0; i < 8; i++)
+                {
+                    var subtree = octree.Subtrees[i];
+
+                    if (subtree.Occupied)
+                    {
+                        bool fork = false;
+                        if (workerPool.AvailableThreadCount > 0)
+                        {
+                            lock (workerPool)
+                            {
+                                if (workerPool.AvailableThreadCount > 0)
+                                {
+                                    workerPool.QueueTask(() => ReduceOctree(subtree, workerPool));
+                                    fork = true;
+                                }
+                            }
+                        }
+
+                        if (!fork)
+                        {
+                            ReduceOctree(subtree, workerPool);
+                        }
+                    }
+                    else
+                    {
+                        subtree.Cut();
+                    }
+                }
+            }
+        }
+
         private void ConstructNavVolume()
         {
-            var navVolume = new NavVolume(Vector3.zero, m_VolumeDepth);
+            m_OctreeState = OctreeState.Null;
+            navVolume = new NavVolume(Vector3.zero, m_VolumeDepth);
 
             Thread thread = new Thread(() =>
             {
                 Utility.ThreadPool workerPool = new Utility.ThreadPool(8);
-                
+                m_OctreeState = OctreeState.Constructing;
                 ConstructOctree(navVolume.Root, 0, m_VolumeDepth, workerPool);
-
                 workerPool.Dispose();
+
+                
+                workerPool = new Utility.ThreadPool(8);
+                m_OctreeState = OctreeState.Reducing;
+                ReduceOctree(navVolume.Root, workerPool);
+                workerPool.Dispose();
+
+                m_OctreeState = OctreeState.Done;
             });
 
             thread.Start();
