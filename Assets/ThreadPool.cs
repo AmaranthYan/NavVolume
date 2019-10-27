@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Threading;
 
 namespace NavVolume.Utility
@@ -8,8 +8,8 @@ namespace NavVolume.Utility
     {
         public delegate void ThreadTask();
 
-        private Queue<ThreadTask> m_TaskQueue = new Queue<ThreadTask>();
-        private bool m_Disposed = false;
+        private ConcurrentQueue<ThreadTask> m_TaskQueue = new ConcurrentQueue<ThreadTask>();
+        private int m_Disposed = 0;
 
         private Thread[] m_WorkerThread;
         private object m_PoolLock = new object();
@@ -17,35 +17,31 @@ namespace NavVolume.Utility
 
         private void ThreadJob()
         {
+            SpinWait spinWait = new SpinWait();
             while (true)
             {
                 ThreadTask currentTask = null;
-                lock (m_PoolLock)
+                if (m_TaskQueue.TryDequeue(out currentTask))
                 {
-                    if (m_TaskQueue.Count > 0)
-                    {
-                        currentTask = m_TaskQueue.Dequeue();
-                    }
-                    else if (m_Disposed)
-                    {
-                        break;
-                    }
-                    else
-                    {
-                        m_AvailableThreadCount++;
-                        Monitor.Wait(m_PoolLock);
-                        m_AvailableThreadCount--;
-                    }
+                    Interlocked.Decrement(ref m_AvailableThreadCount);
+                    currentTask.Invoke();
+                    Interlocked.Increment(ref m_AvailableThreadCount);
                 }
-
-                // execute thread task
-                currentTask?.Invoke();
+                else if (m_Disposed != 0)
+                {
+                    break;
+                }
+                else
+                {
+                    spinWait.SpinOnce();
+                }
             }
         }
 
         public ThreadPool(int threadCount)
         {
             m_WorkerThread = new Thread[threadCount];
+            Interlocked.Exchange(ref m_AvailableThreadCount, threadCount);
             for (int i = 0; i < threadCount; i++)
             {
                 m_WorkerThread[i] = new Thread(new ThreadStart(ThreadJob));
@@ -55,19 +51,7 @@ namespace NavVolume.Utility
 
         public void Dispose()
         {
-            bool disposing = false;
-
-            lock (m_PoolLock)
-            {
-                if (!m_Disposed)
-                {
-                    m_Disposed = true;
-                    Monitor.PulseAll(m_PoolLock);
-                    disposing = true;
-                }
-            }
-
-            if (disposing)
+            if (Interlocked.CompareExchange(ref m_Disposed, 1, 0) == 0)
             {
                 foreach (var thread in m_WorkerThread)
                 {
@@ -83,22 +67,15 @@ namespace NavVolume.Utility
         {
             get
             {
-                lock (m_PoolLock)
-                {
-                    return m_Disposed ? 0 : m_AvailableThreadCount;
-                }
+                return m_Disposed == 0 ? m_AvailableThreadCount : 0;
             }
         }
 
         public void QueueTask(ThreadTask task)
         {
-            lock (m_PoolLock)
-            {
-                if (m_Disposed) throw new ObjectDisposedException("The thread pool instance has been disposed");
+            if (m_Disposed != 0) throw new ObjectDisposedException("The thread pool instance has been disposed");
 
-                m_TaskQueue.Enqueue(task);
-                Monitor.Pulse(m_PoolLock);
-            }
+            m_TaskQueue.Enqueue(task);
         }
     }
 }
